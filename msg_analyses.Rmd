@@ -1,0 +1,186 @@
+---
+title: "MSG analyses"
+author: "Defu Yap, Geoffrey Brookshire, Daniel Casasanto"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE) # Don't print the R code
+
+library(knitr) # For pretty tables in the text (also pander or xtable)
+library(permute) # For within-subjects randomization: how() & shuffle()
+msg <- read.csv('data/msgclause.csv')
+```
+
+Let's use this script to gather together all the analyses and to generate the plots.
+
+
+## Descriptives
+
+People produced drastically different numbers of gestures in different directions. This plot shows all the gestures in the data.
+
+``` {r gestureTable}
+# kable(summary(msg$direction))
+counts <- summary(msg$direction)
+bar.names <- names(counts)
+barplot(height = counts,
+        names.arg = bar.names,
+        las = 2,
+        col = ifelse(bar.names %in% c("UP", "DOWN", "LEFT", "RIGHT"),
+                     'blue', 'grey'),
+        cex.names = 0.8,
+        main = 'Total number of gestures produced',
+        ylab = 'Count')
+rm(counts, bar.names)
+```
+
+# Analysis
+
+We computed congruity as the proportion of gestures that were in the same direction as the dominant direction of the story.
+
+``` {r congruityFunc}
+
+# Calculate the proportion of congruent gestures in a data.frame
+Congruity <- function(dat) {
+  mean(dat$StoryDirection == dat$direction)
+}
+```
+
+## Overall congruity
+
+Since there were four possible directions of interest, it would be tempting to treat 25\% as chance. However,  participants produced unequal numbers of gestures in each direction and each story type, therefore we cannot compare our data against an a priori chance value. To test whether gestures were congruent with the story direction more often than would be expected by chance, we performed within-subjects permutation tests. In each permutation, we randomly shuffled the story direction within each participant's data 10,000 times, and then computed the congruity over the shuffled data. The permuted distributions are reported as Mean $\pm$ SD.
+
+``` {r overallPermuteFunc}
+
+# Within-subjects permutation test on proportion of congr. gestures.
+WithinSubsCongPermute <- function(dat, n.reps=10000){
+  PermHelper <- function(dat) {
+    CTRL <- how(blocks = dat$Sub) 
+    shuff.inx <- shuffle(nrow(dat), control = CTRL) # shuffle indices within Sub
+    dat$StoryDirection <- dat$StoryDirection[shuff.inx]
+    return(Congruity(dat)) # calculate mean congruence across all Sub
+  }
+  replicate(n=n.reps, expr=PermHelper(dat))  
+}
+```
+
+## Congruity within each story direction
+
+We performed bootstrapping tests ($k=1000$) to test whether congruity for each story direction was greater than would be expected by chance. To determine the chance level of congruity, we sampled gestures with replacement within each subject but across all story directions. To ensure that each subject had the same influence over the final congruity estimate, we sampled the same number of gestures as each subject produced in that story direction. We then compared the observed rate of congruity between the observed and predicted gesture directions against the chance level, established by bootstrapping.
+
+``` {r singleDirectionBootFunc}
+
+# Bootstrap test on proportion of congruent gestures in one story direction.
+BootSingleDirection <- function(dat, story.direction, n.reps=1000) {
+  
+  # First figure out how many samples to draw for each subject
+  n.samps.per.subj <- aggregate(X ~ Sub, data=dat,
+                                subset=(StoryDirection == story.direction),
+                                FUN=length)
+  counts <- n.samps.per.subj$X
+  names(counts) <- n.samps.per.subj$Sub
+  
+  BootSampHelper <- function() {
+    # Sample with replacement from within each group
+    # Take the same number of observations as there 
+    # are for each story direction.
+    # Be sure to only look at subjects who had > 0 gestures in this cond.
+    resamp.dat <- stratifiedDT(subset(dat, Sub %in% n.samps.per.subj$Sub),
+                               group = 'Sub',
+                               size = counts,
+                               replace = TRUE)
+    
+    # Get the bootstrapped congruence with this story direction
+    resamp.dat$StoryDirection <- story.direction
+    c.resamp <- Congruity(resamp.dat)
+    return(c.resamp)
+  }
+  
+  replicate(n=n.reps, expr=BootSampHelper())
+}
+```
+
+## Analog of one-way ANOVA
+
+```{r onewayAnovaPermuteFunc}
+
+# Oneway permutation functions
+
+# Compute the means for each input language; get the variance of those means.
+GroupVar <- function(dat) {
+  group.means <- by(dat, dat$Input.Lang, Congruity)
+  return(var(group.means))
+}
+
+# Permutation test analogous to a one-way ANOVA.
+# Are the differences in congruity between groups greater than chance?
+WithinSubsCongVarPermute <- function(dat, n.reps=10000){
+  PermHelper <- function(dat) {
+    CTRL <- how(blocks = dat$Sub)
+    shuff.inx <- shuffle(nrow(dat), control = CTRL) # shuffle indices within Sub
+    dat$Input.Lang <- dat$Input.Lang[shuff.inx]
+    return(GroupVar(dat)) # calculate mean congruence across all Sub
+  }
+  replicate(n=n.reps, expr=PermHelper(dat))  
+}
+
+```
+
+# Results
+
+Before all analysis, we excluded non-gestures and emblems.
+
+``` {r cleanData}
+
+# msg$StoryDirection[msg$StoryDirection == 'left.mov'] <- 'left'
+
+# rename 'gesture' to 'storyGesture' to avoid confusing storyGesture for clauseGesture
+names(msg)[names(msg) == 'gesture'] <- 'storyGesture' 
+
+# exclude non-gestures and emblems
+msg <- msg[which(msg$storyGesture != "" 
+                 & msg$storyGesture != "ADAPTOR"
+                 & msg$storyGesture != 'ENUMERATING'
+                 & msg$storyGesture != 'EMBLEM'
+                 & msg$storyGesture != "NA "),] 
+msg$storyGesture <- factor(msg$storyGesture)
+
+ReportPermute <- function(emp, perm.dist) {
+  paste('(', round(mean(perm.dist), 3) * 100,
+      ' $\\pm$ ', round(sd(perm.dist), 3) * 100,
+      '%, p = ', mean(perm.dist > emp), ')',
+      sep='')
+}
+```
+
+## Four-direction omnibus (collapses direction, language and clause type)
+
+``` {r omnibus, fig.height=3, fig.width=4}
+p <- subset(msg, 
+            (direction %in% c('UP','DOWN','LEFT','RIGHT'))
+            & (experiment == 'MSG1'))
+p$direction <- factor(tolower(p$direction)) 
+# Congruity(p) # real/observed congruity
+perm.stat <- WithinSubsCongPermute(p, n.reps = 1000)
+# summary(perm.stat) # permuted congruity
+hist(perm.stat, xlim=c(0,1), col = 'black')
+abline(v=Congruity(p), col='red')
+p.val <- mean(perm.stat > Congruity(p))
+
+```
+
+Across all these data, participants gestured in a direction congruent with the direction of the story `r round(Congruity(p), 3) * 100` % of the time. This proportion of congruence was higher than would be expected by chance `r ReportPermute(Congruity(p), perm.stat)`.
+
+
+## Single-directional bootstrapping analyses
+
+## One-way permutation test of language type
+
+## Pairwise permutation tests of language type
+
+## Permutation tests within each language type
+
+## Pairwise permutation tests of clause type (target vs. non-target)
+
+## Permutation tests within each clause type
+
