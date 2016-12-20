@@ -113,11 +113,11 @@ mean(perm.stat > cong.fnc(d))
 # 7. permutation tests within each clause type
 
 library(lme4)
-library(devtools)
-install_github(repo='analysis_helpers', username='gbrookshire', subdir='analysisHelpers')
-library("analysisHelpers")
+# library(devtools)
+# install_github(repo='analysis_helpers', username='gbrookshire', subdir='analysisHelpers')
+# library("analysisHelpers")
 library(plotrix) # polar plots
-library(permute)
+# library(permute)
 
 msg <- read.csv("~/Desktop/msgclause.csv") # recoded gesture labels according to clause direction
 msg$StoryDirection[msg$StoryDirection == 'left.mov'] <- 'left'
